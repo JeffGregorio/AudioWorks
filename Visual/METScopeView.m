@@ -11,8 +11,11 @@
 #pragma mark -
 #pragma mark METScopePlotDataView
 @interface METScopePlotDataView : UIView {
-    CGPoint *plotUnits;     // Plot data in plot units
-    CGPoint *plotPixels;    // Plot data in pixels
+    Float32 *inputXBuffer;
+    Float32 *inputYBuffer;
+    Float32 *resamplingIndices;
+    CGPoint *plotUnits;     // Scaled plot data in plot units
+    CGPoint *plotPixels;    // Scaled plot data in pixels
     pthread_mutex_t dataMutex;
 }
 @property (readonly) CGPoint *plotUnits;
@@ -59,11 +62,11 @@
     
     pthread_mutex_lock(&dataMutex);
     
-    if (plotUnits)
-        free(plotUnits);
-    
-    if (plotPixels)
-        free(plotPixels);
+    if (inputXBuffer) free(inputXBuffer);
+    if (inputYBuffer) free(inputYBuffer);
+    if (resamplingIndices) free(resamplingIndices);
+    if (plotUnits)  free(plotUnits);
+    if (plotPixels) free(plotPixels);
     
     pthread_mutex_unlock(&dataMutex);
     pthread_mutex_destroy(&dataMutex);
@@ -83,12 +86,15 @@
     
     pthread_mutex_lock(&dataMutex);
     
-    if (plotUnits)
-        free(plotUnits);
+    if (inputXBuffer) free(inputXBuffer);
+    if (inputYBuffer) free(inputYBuffer);
+    if (resamplingIndices) free(resamplingIndices);
+    if (plotUnits) free(plotUnits);
+    if (plotPixels) free(plotPixels);
     
-    if (plotPixels)
-        free(plotPixels);
-    
+    inputXBuffer = (Float32 *)calloc(resolution, sizeof(Float32));
+    inputYBuffer = (Float32 *)calloc(resolution, sizeof(Float32));
+    resamplingIndices = (Float32 *)calloc(resolution, sizeof(Float32));
     plotUnits  = (CGPoint *)calloc(resolution, sizeof(CGPoint));
     plotPixels = (CGPoint *)calloc(resolution, sizeof(CGPoint));
     
@@ -96,24 +102,17 @@
 }
 
 /* Set the plot data in plot units by sampling or interpolating */
-- (void)setDataWithLength:(int)length xData:(float *)xx yData:(float *)yy {
+- (void)setDataWithLength:(int)length xData:(Float32 *)xx yData:(Float32 *)yy {
     
     fillMode = false;
-    
-    float* xBuffer = xx;
-    float* yBuffer = yy;
-    
-//    /* Allocate buffers and copy the input data so we don't modify the original */
-//    float *xBuffer = (float *)malloc(length * sizeof(float));
-//    float *yBuffer = (float *)malloc(length * sizeof(float));
-//    memcpy(xBuffer, xx, length * sizeof(float));
-//    memcpy(yBuffer, yy, length * sizeof(float));
+    Float32* xBuffer = xx;
+    Float32* yBuffer = yy;
     
     /* If the waveform has more samples than the plot resolution, resample the waveform */
     if (length > resolution) {
         
         /* Compute the down-sample factor */
-        int inFramesPerPlotFrame = floorf((float)length / (float)resolution);
+        int inFramesPerPlotFrame = floorf((Float32)length / (Float32)resolution);
         
         /* If we're down-sampling past a threshold, sample the maximum waveform amplitude in a specified window length */
         if (inFramesPerPlotFrame > 16) {
@@ -121,71 +120,60 @@
             fillMode = true;
             
             /* Compute a (length = resolution) buffer of x data */
-            float *amplitudeXBuffer = (float *)malloc(resolution * sizeof(float));
-            [self linspace:xBuffer[0]
-                       max:xBuffer[length-1]
-               numElements:resolution
-                     array:amplitudeXBuffer
-             ];
+            [self linspace:xBuffer[0] max:xBuffer[length-1] numElements:resolution array:inputXBuffer];
             
             /* Sample the maximum value in (length = inFramesPerPlotFrame) window */
             float maxInWindow;
-            float *maxAmpYBuffer = (float *)malloc(resolution * sizeof(float));
             for (int i = 0; i < resolution-1; i++) {
                 
                 maxInWindow = 0.0;
                 for (int j = 0; j < inFramesPerPlotFrame; j++) {
-                    if (yBuffer[i*inFramesPerPlotFrame+j] > maxInWindow)
-                        maxInWindow = yBuffer[i*inFramesPerPlotFrame+j];
+                    if (fabs(yBuffer[i*inFramesPerPlotFrame+j]) > maxInWindow)
+                        maxInWindow = fabs(yBuffer[i*inFramesPerPlotFrame+j]);
                 }
                 
-                maxAmpYBuffer[i] = maxInWindow;
+                inputYBuffer[i] = maxInWindow;
             }
+            inputYBuffer[resolution-1] = inputYBuffer[resolution-2];
             
             /* Copy the data */
             pthread_mutex_lock(&dataMutex);
             for (int i = 0; i < resolution; i++)
-                plotUnits[i] = CGPointMake(amplitudeXBuffer[i], maxAmpYBuffer[i]);
+                plotUnits[i] = CGPointMake(inputXBuffer[i], inputYBuffer[i]);
             pthread_mutex_unlock(&dataMutex);
-            
-            free(amplitudeXBuffer);
-            free(maxAmpYBuffer);
         }
         
         /* Otherwise, assume we can re-sample the waveform with minimal aliasing */
         else {
         
-            /* Get linearly-spaced indices to sample the incoming waveform */
-            float *indices = (float *)calloc(resolution, sizeof(float));
-            [self linspace:0 max:length-1 numElements:resolution array:indices];
+            /* Get query values for resampling the incoming waveform */
+            [self linspace:0 max:length-1 numElements:resolution array:resamplingIndices];
             
             /* Make sure drawRect doesn't access the data while we're updating it */
             pthread_mutex_lock(&dataMutex);
             
             int idx;
             for (int i = 0; i < resolution; i++) {
-                idx = (int)indices[i];
+                idx = (int)resamplingIndices[i];
                 plotUnits[i] = CGPointMake(xBuffer[idx], yBuffer[idx]);
             }
             
             pthread_mutex_unlock(&dataMutex);
-            free(indices);
         }
     }
     
     /* If the waveform has fewer samples than the plot resolution, interpolate the waveform */
     else if (length < resolution) {
         
-        /* Get $plotResolution$ linearly-spaced x-values */
-        float *targetXVals = (float *)calloc(resolution, sizeof(float));
-        [self linspace:xBuffer[0] max:xBuffer[length-1] numElements:resolution array:targetXVals];
+        /* Get query values for interpolation */
+        [self linspace:xBuffer[0] max:xBuffer[length-1] numElements:resolution array:resamplingIndices];
         
         /* Make sure drawRect doesn't access the data while we're updating it */
         pthread_mutex_lock(&dataMutex);
         
         /* Interpolate */
         CGPoint current, next, target;
-        float perc;
+        Float32 perc;
         int j = 0;
         for (int i = 0; i < length-1; i++) {
             
@@ -193,14 +181,14 @@
             current.y = yBuffer[i];
             next.x = xBuffer[i+1];
             next.y = yBuffer[i+1];
-            target.x = targetXVals[j];
+            target.x = resamplingIndices[j];
             
             while (target.x < next.x) {
                 perc = (target.x - current.x) / (next.x - current.x);
                 target.y = current.y * (1-perc) + next.y * perc;
                 plotUnits[j] = target;
                 j++;
-                target.x = targetXVals[j];
+                target.x = resamplingIndices[j];
             }
         }
         
@@ -208,7 +196,7 @@
         current.y = yBuffer[length-2];
         next.x = xBuffer[length-1];
         next.y = yBuffer[length-1];
-        target.x = targetXVals[j];
+        target.x = resamplingIndices[j];
         
         while (j < resolution-1) {
             j++;
@@ -218,7 +206,6 @@
         }
         
         pthread_mutex_unlock(&dataMutex);
-        free(targetXVals);
     }
     
     /* If waveform has number of samples == plot resolution, just copy */
@@ -228,9 +215,6 @@
             plotUnits[i] = CGPointMake(xBuffer[i], yBuffer[i]);
         pthread_mutex_unlock(&dataMutex);
     }
-    
-//    free(xBuffer);
-//    free(yBuffer);
     
     [self rescalePlotData];     // Convert sampled plot units to pixels
 }
@@ -242,10 +226,6 @@
     
     for (int i = 0; i < resolution; i++) //{
         plotPixels[i] = [parent plotScaleToPixel:plotUnits[i]];
-//        if (isnan(plotPixels[i].x)) {
-//            printf("%s: plotPixels[%d].x = NaN\n",__PRETTY_FUNCTION__, i);
-//        }
-//    }
     
     pthread_mutex_unlock(&dataMutex);
     
@@ -285,31 +265,22 @@
     /* */
     if (fillMode) {
         
+        /* Find the first non-NaN pixel location */
+        int startIdx = 0;
+        while ((isnan((float)plotPixels[startIdx].x) || isnan((float)plotPixels[startIdx].y) ||
+                (isinf((float)plotPixels[startIdx].x) || isinf((float)plotPixels[startIdx].x)))
+               && startIdx < resolution-1)
+            startIdx++;
+        
         CGPoint current;
         CGPoint previous;
+        previous = plotPixels[startIdx];
         
-        int startIdx = 2;
-        previous = plotPixels[startIdx-1];
-        current = plotPixels[startIdx];
-        
-//        /* Find the first non-NaN pixel */
-//        while (isnan((float)plotPixels[startIdx].x || isnan((float)plotPixels[startIdx].x)))
-//            startIdx++;
-        
-//        int plotWin = 4;
-        
-        for (int i = startIdx; i < resolution-1; i++) {
+        for (int i = startIdx+1; i < resolution-1; i++) {
             
             /* Skip any NaNs */
             if (isnan((float)plotPixels[i].x) || isnan((float)plotPixels[i].y))
                 continue;
-            
-//            int maxIdx = i;
-//            for (int j = i; j < i+plotWin; j++) {
-//                if (plotPixels[j].y > plotPixels[maxIdx].y) {
-//                    maxIdx = j;
-//                }
-//            }
             
             current = plotPixels[i];
             
@@ -337,10 +308,26 @@
         CGContextSetLineWidth(context, lineWidth);
         CGContextSetStrokeColorWithColor(context, lineColor.CGColor);
         
-        CGPoint previous = plotPixels[0];
-        for (int i = 2; i < resolution-1; i++) {
+        /* Find the first non-NaN pixel location */
+        int startIdx = 0;
+        while ((isnan((float)plotPixels[startIdx].x) || isnan((float)plotPixels[startIdx].y) ||
+               (isinf((float)plotPixels[startIdx].x) || isinf((float)plotPixels[startIdx].x)))
+               && startIdx < resolution-1)
+            startIdx++;
+        
+        CGPoint previous = plotPixels[startIdx];
+        
+        for (int i = startIdx+1; i < resolution-1; i++) {
             
-            if (isnan((float)plotPixels[i].x) || isnan((float)plotPixels[i].y))
+            /* Skip any NaNs or Infs */
+            if (isnan((float)plotPixels[i].x) || isnan((float)plotPixels[i].y) ||
+                isinf((float)plotPixels[i].x) || isinf((float)plotPixels[i].y))
+                continue;
+            
+            /* Skip anything beyond the plot bounds */
+            if (parent.displayMode == kMETScopeViewTimeDomainMode &&
+                (plotUnits[i].x < parent.visiblePlotMin.x || plotUnits[i].x > parent.visiblePlotMax.x ||
+                plotUnits[i].y < parent.visiblePlotMin.y || plotUnits[i].y > parent.visiblePlotMax.y))
                 continue;
             
             CGContextBeginPath(context);
@@ -355,10 +342,33 @@
     pthread_mutex_unlock(&dataMutex);
 }
 
-/* Generate a linearly-spaced set of indices for sampling an incoming waveform */
-- (void)linspace:(float)minVal max:(float)maxVal numElements:(int)size array:(float*)array {
+- (CGFloat)getAmplitudeAtXCoordinate:(CGFloat)x {
     
-    float step = (maxVal - minVal) / (size-1);
+    CGFloat amp;
+    CGFloat inc = (parent.visiblePlotMax.x - parent.visiblePlotMin.x) / (CGFloat)resolution;
+    int idx = (x - parent.visiblePlotMin.x) / inc;
+    
+    amp = plotUnits[idx].y;
+    
+    int n = 1;
+    if (idx > 0) {
+        amp += plotUnits[idx-1].y;
+        n += 1;
+    }
+    if (idx < resolution-1) {
+        amp += plotUnits[idx+1].y;
+        n += 1;
+    }
+    
+    amp /= n;
+    
+    return amp;
+}
+
+/* Generate a linearly-spaced set of indices for sampling an incoming waveform */
+- (void)linspace:(Float32)minVal max:(Float32)maxVal numElements:(int)size array:(Float32 *)array {
+    
+    Float32 step = (maxVal - minVal) / (size-1);
     array[0] = minVal;
     for (int i = 1; i < size-1 ;i++) {
         array[i] = array[i-1] + step;
@@ -507,21 +517,21 @@
     CGContextSetAlpha(context, 0.5);
     CGContextSetLineWidth(context, 0.3);
     CGContextSetLineDash(context, M_PI, (CGFloat *)&gridDashLengths, 2);
-    
+
     loc.y = 0;
     loc.x = parent.originPixel.x;
-    
+
     /* Draw in-bound vertical grid lines in positive x direction until we excede the frame width */
     while (loc.x < 0) loc.x += parent.tickPixels.x;
     while (loc.x <= self.bounds.size.width) {
-        
+
         CGContextMoveToPoint(context, loc.x, loc.y);
         CGContextAddLineToPoint(context, loc.x, self.bounds.size.height);
         CGContextStrokePath(context);
         
         loc.x += parent.tickPixels.x;
     }
-    
+
     loc.y = 0;
     loc.x = parent.originPixel.x;
     
@@ -572,7 +582,7 @@
     NSDictionary *labelAttributes;
     CGPoint pixelOffset;
 }
-@property METScopeView *parent;
+@property (atomic, weak) METScopeView *parent;
 @end
 
 @implementation  METScopeLabelView
@@ -606,14 +616,14 @@
 - (void)drawXLabels {
     
     CGPoint loc;            // Current point in pixels
-    NSString *label;
+    NSString *label = [[NSString alloc] init];
     
     /* If we're drawing labels on the axes and the x-axis isn't within the plot bounds, do nothing */
     if ((parent.xLabelPosition == kMETScopeViewXLabelsBelowAxis ||
         parent.xLabelPosition == kMETScopeViewXLabelsAboveAxis) &&
         (parent.visiblePlotMin.y > 0 || parent.visiblePlotMax.y < 0))
         return;
-    
+
     /* ---------------------------- */
     /* === Positive x direction === */
     /* ---------------------------- */
@@ -628,17 +638,17 @@
     
     int labelCenter = ((parent.xLabelPosition == kMETScopeViewXLabelsOutsideAbove) ||
                        (parent.xLabelPosition == kMETScopeViewXLabelsOutsideBelow)) ? -14 : 2;
-    while(loc.x <= self.bounds.size.width) {
+    while(loc.x <= self.frame.size.width) {
         
         loc.x += self.frame.origin.x;
-        label = [NSString stringWithFormat:parent.xLabelFormatString, [parent pixelToPlotScale:loc withOffset:pixelOffset].x];
+        label = [NSString stringWithFormat:parent.xLabelFormatString, [parent pixelToPlotScale:loc].x];
         loc.x -= self.frame.origin.x;
         loc.x += labelCenter;
         [label drawAtPoint:loc withAttributes:labelAttributes];
         loc.x -= labelCenter;
         loc.x += parent.tickPixels.x;
     }
-    
+
     /* ---------------------------- */
     /* === Negative x direction === */
     /* ---------------------------- */
@@ -656,7 +666,7 @@
     while(loc.x >= 0) {
         
         loc.x += self.frame.origin.x;
-        label = [NSString stringWithFormat:parent.xLabelFormatString, [parent pixelToPlotScale:loc withOffset:pixelOffset].x];
+        label = [NSString stringWithFormat:parent.xLabelFormatString, [parent pixelToPlotScale:loc].x];
         loc.x -= self.frame.origin.x;
         loc.x += labelCenter;
         [label drawAtPoint:loc withAttributes:labelAttributes];
@@ -686,16 +696,16 @@
     loc.x = (parent.yLabelPosition == kMETScopeViewYLabelsOutsideLeft) ? self.bounds.origin.x : loc.x;
     loc.y += (parent.xLabelPosition == kMETScopeViewXLabelsOutsideAbove) ? METScopeView_XLabel_Outside_Extension : 0;
     loc.x = (parent.yLabelPosition == kMETScopeViewYLabelsOutsideRight) ? self.bounds.size.width - METScopeview_YLabel_Outside_Extension : loc.x;
-    
+
     loc.x += 2;
     while(loc.y <= self.bounds.size.height) {
         
         loc.y += self.frame.origin.y;
-        label = [NSString stringWithFormat:parent.yLabelFormatString, [parent pixelToPlotScale:loc withOffset:pixelOffset].y];
+        label = [NSString stringWithFormat:parent.yLabelFormatString, [parent pixelToPlotScale:loc].y];
         loc.y -= self.frame.origin.y;
-        loc.y -= 14;
+        loc.y -= 7;
         [label drawAtPoint:loc withAttributes:labelAttributes];
-        loc.y += 14;
+        loc.y += 7;
         loc.y += parent.tickPixels.y;
     }
     
@@ -715,11 +725,11 @@
     while(loc.y >= 0) {
         
         loc.y += self.frame.origin.y;
-        label = [NSString stringWithFormat:parent.yLabelFormatString, [parent pixelToPlotScale:loc withOffset:pixelOffset].y];
+        label = [NSString stringWithFormat:parent.yLabelFormatString, [parent pixelToPlotScale:loc].y];
         loc.y -= self.frame.origin.y;
-        loc.y -= 14;
+        loc.y -= 7;
         [label drawAtPoint:loc withAttributes:labelAttributes];
-        loc.y += 14;
+        loc.y += 7;
         loc.y -= parent.tickPixels.y;
     }
 }
@@ -768,11 +778,7 @@
 @synthesize panEnabled;
 
 - (id)initWithFrame:(CGRect)frame {
-    
-    NSLog(@"%s", __PRETTY_FUNCTION__);
-    
     self = [super initWithFrame:frame];
-    
     if (self) {
         [self setDefaults];
     }
@@ -780,11 +786,7 @@
 }
 
 - (id)initWithCoder:(NSCoder *)aDecoder {
-    
-    NSLog(@"%s", __PRETTY_FUNCTION__);
-    
     self = [super initWithCoder:aDecoder];
-    
     if (self) {
         [self setDefaults];
     }
@@ -816,19 +818,20 @@
     /* ------------------ */
     
     axisScale = kMETScopeViewAxesLinear;
-    
     [self setPlotResolution:METScopeView_Default_PlotResolution];
+    
+    /* Visible range constraints */
+    minPlotRange = CGPointMake(METScopeView_Default_XMinRange_TD, METScopeView_Default_YMinRange_TD);
+    maxPlotRange = CGPointMake(METScopeView_Default_XMaxRange_TD, METScopeView_Default_YMaxRange_TD);
+    
+    /* Absolute bounds */
     minPlotMin = CGPointMake(METScopeView_Default_XMin_TD, METScopeView_Default_YMin_TD);
     maxPlotMax = CGPointMake(METScopeView_Default_XMax_TD, METScopeView_Default_YMax_TD);
     tickUnits  = CGPointMake(METScopeView_Default_XTick_TD, METScopeView_Default_YTick_TD);
     
+    /* Visible bounds */
     [self setVisibleXLim:minPlotMin.x max:maxPlotMax.x];
     [self setVisibleYLim:minPlotMin.y max:maxPlotMax.y];
-    
-    minPlotRange.x = METScopeView_Default_XMinRange_TD;
-    minPlotRange.y = METScopeView_Default_YMinRange_TD;
-    maxPlotRange.x = METScopeView_Default_XMaxRange_TD;
-    maxPlotRange.y = METScopeView_Default_YMaxRange_TD;
     
     /* Frequency-domain mode needs sampling rate for x-axis scaling */
     samplingRate = METScopeView_Default_SamplingRate;
@@ -909,14 +912,13 @@
 - (void)setDisplayMode:(DisplayMode)mode {
     
     if (mode == kMETScopeViewTimeDomainMode) {
-        printf("Time domain mode\n");
-        minPlotMin = CGPointMake(METScopeView_Default_XMin_TD, METScopeView_Default_YMin_TD);
-        maxPlotMax = CGPointMake(METScopeView_Default_XMax_TD, METScopeView_Default_YMax_TD);
-        tickUnits  = CGPointMake(METScopeView_Default_XTick_TD, METScopeView_Default_YTick_TD);
         minPlotRange.x = METScopeView_Default_XMinRange_TD;
         minPlotRange.y = METScopeView_Default_YMinRange_TD;
         maxPlotRange.x = METScopeView_Default_XMaxRange_TD;
         maxPlotRange.y = METScopeView_Default_YMaxRange_TD;
+        minPlotMin = CGPointMake(METScopeView_Default_XMin_TD, METScopeView_Default_YMin_TD);
+        maxPlotMax = CGPointMake(METScopeView_Default_XMax_TD, METScopeView_Default_YMax_TD);
+        tickUnits  = CGPointMake(METScopeView_Default_XTick_TD, METScopeView_Default_YTick_TD);
         xLabelFormatString = METScopeView_Default_xLabelFormatString_TD;
         yLabelFormatString = METScopeView_Default_yLabelFormatString_TD;
         [self setVisibleXLim:minPlotMin.x max:maxPlotMax.x];
@@ -925,10 +927,6 @@
     }
     
     else if (mode == kMETScopeViewFrequencyDomainMode) {
-        printf("Frequency domain mode\n");
-        minPlotMin = CGPointMake(METScopeView_Default_XMin_FD, METScopeView_Default_YMin_FD);
-        maxPlotMax = CGPointMake(METScopeView_Default_XMax_FD, METScopeView_Default_YMax_FD);
-        tickUnits  = CGPointMake(METScopeView_Default_XTick_FD, METScopeView_Default_YTick_FD);
         
         minPlotRange.x = METScopeView_Default_XMinRange_FD;
         maxPlotRange.x = METScopeView_Default_XMaxRange_FD;
@@ -942,6 +940,10 @@
             maxPlotRange.y = METScopeView_Default_YMaxRange_FD_log;
         }
         
+        minPlotMin = CGPointMake(METScopeView_Default_XMin_FD, METScopeView_Default_YMin_FD);
+        maxPlotMax = CGPointMake(METScopeView_Default_XMax_FD, METScopeView_Default_YMax_FD);
+        tickUnits  = CGPointMake(METScopeView_Default_XTick_FD, METScopeView_Default_YTick_FD);
+
         xLabelFormatString = METScopeView_Default_xLabelFormatString_FD;
         yLabelFormatString = METScopeView_Default_yLabelFormatString_FD;
         [self setVisibleXLim:minPlotMin.x max:maxPlotMax.x];
@@ -1035,47 +1037,67 @@
 }
 
 /* Set x-axis hard limit constraining pinch zoom */
-- (void)setHardXLim:(float)xMin max:(float)xMax {
+- (void)setHardXLim:(CGFloat)xMin max:(CGFloat)xMax {
     minPlotMin.x = xMin;
     maxPlotMax.x = xMax;
     [self setVisibleXLim:xMin max:xMax];
 }
 /* Set y-axis hard limit constraining pinch zoom */
-- (void)setHardYLim:(float)yMin max:(float)yMax {
+- (void)setHardYLim:(CGFloat)yMin max:(CGFloat)yMax {
     minPlotMin.y = yMin;
     maxPlotMax.y = yMax;
     [self setVisibleYLim:yMin max:yMax];
 }
 
 /* Set the range of the x-axis */
-- (void)setVisibleXLim:(float)xMin max:(float)xMax {
+- (void)setVisibleXLim:(CGFloat)xMin max:(CGFloat)xMax {
     
-    if (xMin >= xMax || (xMin < minPlotMin.x || xMax > maxPlotMax.x)
-        || (xMax-xMin) > maxPlotRange.x || (xMax-xMin) < minPlotRange.x) {
+//    if (xMin >= xMax) {
+//        NSLog(@"xMin >= xMax : %f >= %f", xMin, xMax);
+//        return;
+//    }
+//    if (xMin < minPlotMin.x) {
+//        NSLog(@"xMin < minPlotMin.x : %f < %f", xMin, minPlotMin.x);
+//        return;
+//    }
+//    if (xMax > maxPlotMax.x) {
+//        NSLog(@"xMax > maxPlotMax.x : %f > %f", xMax, maxPlotMax.x);
+//        return;
+//    }
+//    if ((xMax-xMin) > maxPlotRange.x) {
+//        NSLog(@"(xMax-xMin) > maxPlotRange.x : %f > %f", (xMax-xMin), maxPlotRange.x);
+//        return;
+//    }
+//    if ((xMax-xMin) < minPlotRange.x) {
+//        NSLog(@"(xMax-xMin) < minPlotRange.x : %f < %f", (xMax-xMin), minPlotRange.x);
+//        return;
+//    }
+    
+    if (xMin >= xMax || (xMin < minPlotMin.x || xMax > maxPlotMax.x) || (xMax-xMin) > maxPlotRange.x || (xMax-xMin) < minPlotRange.x) {
         NSLog(@"%s: Invalid x-axis limits", __PRETTY_FUNCTION__);
         return;
     }
 
-    [self setVisiblePlotMin:CGPointMake(xMin, visiblePlotMin.y)];
-    [self setVisiblePlotMax:CGPointMake(xMax, visiblePlotMax.y)];
+    visiblePlotMin.x = xMin;
+    visiblePlotMax.x = xMax;
     
     /* Horizontal units per pixel */
     unitsPerPixel.x = (visiblePlotMax.x - visiblePlotMin.x) / self.frame.size.width;
-    
+
     /* Rescale the grid */
     [self setPlotUnitsPerTick:tickUnits.x vertical:tickUnits.y];
 }
 
 /* Set the range of the y-axis */
-- (void)setVisibleYLim:(float)yMin max:(float)yMax {
+- (void)setVisibleYLim:(CGFloat)yMin max:(CGFloat)yMax {
     
     if (yMin >= yMax || (yMin < minPlotMin.y || yMax > maxPlotMax.y)) {
         NSLog(@"%s: Invalid y-axis limits", __PRETTY_FUNCTION__);
         return;
     }
     
-    [self setVisiblePlotMin:CGPointMake(visiblePlotMin.x, yMin)];
-    [self setVisiblePlotMax:CGPointMake(visiblePlotMax.x, yMax)];
+    visiblePlotMin.y = yMin;
+    visiblePlotMax.y = yMax;
     
     /* Vertical units per pixel */
     unitsPerPixel.y = (visiblePlotMax.y - visiblePlotMin.y) / self.frame.size.height;
@@ -1085,13 +1107,13 @@
 }
 
 /* Set ticks and grid scale by specifying the input magnitude per tick/grid block */
-- (void)setPlotUnitsPerXTick:(float)xTick {
+- (void)setPlotUnitsPerXTick:(CGFloat)xTick {
     [self setPlotUnitsPerTick:xTick vertical:tickUnits.y];
 }
-- (void)setPlotUnitsPerYTick:(float)yTick {
+- (void)setPlotUnitsPerYTick:(CGFloat)yTick {
     [self setPlotUnitsPerTick:tickUnits.x vertical:yTick];
 }
-- (void)setPlotUnitsPerTick:(float)xTick vertical:(float)yTick {
+- (void)setPlotUnitsPerTick:(CGFloat)xTick vertical:(CGFloat)yTick {
     
     if (xTick <= 0 || yTick <= 0) {
         NSLog(@"%s: Invalid grid scale", __PRETTY_FUNCTION__);
@@ -1137,6 +1159,7 @@
         
         /* Round tick units to a reasonable number based on the order of magnitude */
         tickUnits.x = floorf(tickUnits.x / powf(10, orderOfMag.x) + 0.5f) * powf(10, orderOfMag.x);
+        
         xLabelFormatString = [NSString stringWithFormat:@"%%%d.%df", (int)fabs(orderOfMag.x) + 1,
                               orderOfMag.x < 0 ? (int)fabs(orderOfMag.x) : 0];
     }
@@ -1229,7 +1252,7 @@
 /* Query the number of plot subviews */
 - (int)getNumberOfPlots {
     
-    return plotDataSubviews.count;
+    return (int)plotDataSubviews.count;
 }
 - (int)getNumberOfVisiblePlots {
     
@@ -1258,8 +1281,7 @@
                                                     lineWidth:width];
     [plotDataSubviews addObject:newSub];
     [self addSubview:newSub];
-    
-    return (plotDataSubviews.count - 1);
+    return ((int)plotDataSubviews.count - 1);
 }
 
 /* Set the plot data for a subview at a specified index */
@@ -1281,7 +1303,7 @@
     /* Frequency-domain mode: perform FFT, pass magnitude */
     else if (displayMode == kMETScopeViewFrequencyDomainMode) {
         
-        float *yBuffer = (float *)calloc(fftSize/2, sizeof(float));
+        Float32 *yBuffer = (Float32 *)calloc(fftSize/2, sizeof(Float32));
         [self computeMagnitudeFFT:yy inBufferLength:len outMagnitude:yBuffer seWindow:true];
         [subView setDataWithLength:fftSize/2 xData:freqs yData:yBuffer];
         free(yBuffer);
@@ -1290,7 +1312,7 @@
 
 - (void)getPlotDataAtIndex:(int)idx withLength:(int)len xData:(float *)xx yData:(float *)yy {
     
-    if (idx > 0 && idx < plotDataSubviews.count) {
+    if (idx >= 0 && idx < plotDataSubviews.count) {
         
         METScopePlotDataView *dataView = ((METScopePlotDataView *)plotDataSubviews[idx]);
         for (int i = 0; i < len; i++) {
@@ -1300,6 +1322,20 @@
     }
     else
         NSLog(@"Invalid plot data index %d\nplotDataSubviews.count = %lu", idx, (unsigned long)plotDataSubviews.count);
+}
+
+- (CGFloat)getFFTMagnitudeAtFrequency:(CGFloat)freq plotIdx:(int)idx {
+    
+    CGFloat mag = 0.0f;
+    
+    if (displayMode == kMETScopeViewTimeDomainMode)
+        return mag;
+    
+    if (idx < 0 || idx >= plotDataSubviews.count)
+        return mag;
+    
+    return [plotDataSubviews[idx] getAmplitudeAtXCoordinate:freq];
+    
 }
 
 /* Set raw coordinates (plot units) while in frequency domain mode without taking the FFT */
@@ -1340,6 +1376,15 @@
     
     if (idx >= 0 && idx < plotDataSubviews.count)
         ((METScopePlotDataView *)plotDataSubviews[idx]).lineColor = color;
+    else
+        NSLog(@"Invalid plot data index %d\nplotDataSubviews.count = %lu", idx, (unsigned long)plotDataSubviews.count);
+}
+
+- (void)setLineAlpha:(CGFloat)alpha atIndex:(int)idx {
+    if (idx >= 0 && idx < plotDataSubviews.count) {
+        UIColor *color = ((METScopePlotDataView *)plotDataSubviews[idx]).lineColor;;
+        ((METScopePlotDataView *)plotDataSubviews[idx]).lineColor = [color colorWithAlphaComponent:alpha];
+    }
     else
         NSLog(@"Invalid plot data index %d\nplotDataSubviews.count = %lu", idx, (unsigned long)plotDataSubviews.count);
 }
@@ -1391,7 +1436,7 @@
 
 - (bool)getFillModeAtIndex:(int)idx {
     
-    bool retVal;
+    bool retVal = false;
     
     if (idx >= 0 && idx < plotDataSubviews.count)
         retVal = ((METScopePlotDataView *)plotDataSubviews[idx]).fillMode;
@@ -1408,22 +1453,22 @@
 
 - (void)setPinchZoomEnabled:(bool)enabled {
     
-//    pinchZoomEnabled = enabled;
-//    
-//    if (!pinchZoomEnabled)
-//        [self removeGestureRecognizer:pinchRecognizer];
-//    else
-//        [self addGestureRecognizer:pinchRecognizer];
+    pinchZoomEnabled = enabled;
+    
+    if (!pinchZoomEnabled)
+        [self removeGestureRecognizer:pinchRecognizer];
+    else
+        [self addGestureRecognizer:pinchRecognizer];
 }
 
 - (void)setPanEnabled:(bool)enabled {
     
-//    panEnabled = enabled;
-//    
-//    if (!panEnabled)
-//        [self removeGestureRecognizer:panRecognizer];
-//    else
-//        [self addGestureRecognizer:panRecognizer];
+    panEnabled = enabled;
+    
+    if (!panEnabled)
+        [self removeGestureRecognizer:panRecognizer];
+    else
+        [self addGestureRecognizer:panRecognizer];
 }
 
 #pragma mark -
@@ -1524,8 +1569,8 @@
     CGPoint retVal;
     
     if (axisScale == kMETScopeViewAxesSemilogY)
-        pY = 20 * log10f(pY + 10e-16);
-        
+        pY = 20.0f * log10f(pY + 10e-16);
+    
     retVal.y = self.frame.size.height * (1 - (pY - visiblePlotMin.y) / (visiblePlotMax.y - visiblePlotMin.y));
     retVal.x = self.frame.size.width * (pX - visiblePlotMin.x) / (visiblePlotMax.x - visiblePlotMin.x);
     
@@ -1537,6 +1582,14 @@
     return [self plotScaleToPixel:plotScale.x y:plotScale.y];
 }
 
+/* Alternate scaling function used by METScopeControlArray. Does not assume input values are linear or dB */
+- (CGPoint)plotScaleToPixel_:(CGPoint)plotScale {
+    CGPoint retVal;
+    retVal.y = self.frame.size.height * (1 - (plotScale.y - visiblePlotMin.y) / (visiblePlotMax.y - visiblePlotMin.y));
+    retVal.x = self.frame.size.width * (plotScale.x - visiblePlotMin.x) / (visiblePlotMax.x - visiblePlotMin.x);
+    return retVal;
+}
+
 /* Return a plot-scale value for a given pixel location in the view */
 - (CGPoint)pixelToPlotScale:(CGPoint)pixel {
     return [self pixelToPlotScale:pixel withOffset:CGPointMake(0.0, 0.0)];
@@ -1544,8 +1597,8 @@
 - (CGPoint)pixelToPlotScale:(CGPoint)pixel withOffset:(CGPoint)pixelOffset {
     
     float px, py;
-    px = (pixel.x - self.frame.origin.x + pixelOffset.x) / self.frame.size.width;
-    py = (pixel.y - self.frame.origin.y + pixelOffset.y) / self.frame.size.height;
+    px = (pixel.x + pixelOffset.x) / self.frame.size.width;
+    py = (pixel.y + pixelOffset.y) / self.frame.size.height;
     py = 1 - py;
     
     CGPoint plotScale;
@@ -1577,7 +1630,7 @@
 }
 
 /* Compute the single-sided magnitude spectrum using Accelerate's vDSP methods */
-- (void)computeMagnitudeFFT:(float *)inBuffer inBufferLength:(int)len outMagnitude:(float *)magnitude seWindow:(bool)doWindow {
+- (void)computeMagnitudeFFT:(Float32 *)inBuffer inBufferLength:(int)len outMagnitude:(float *)magnitude seWindow:(bool)doWindow {
     
     if (fftSetup == NULL) {
         printf("%s: Warning: must call [METScopeView setUpFFTWithSize] before enabling frequency domain mode\n", __PRETTY_FUNCTION__);

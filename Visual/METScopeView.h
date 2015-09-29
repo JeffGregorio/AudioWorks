@@ -34,12 +34,12 @@
 #define METScopeView_Default_XMinRange_TD 0.01
 #define METScopeView_Default_XMaxRange_TD 1.0
 #define METScopeView_Default_YMinRange_TD 0.1
-#define METScopeView_Default_YMaxRange_TD 2.0
+#define METScopeView_Default_YMaxRange_TD 3.0
 #define METScopeView_Default_xLabelFormatString_TD @"%5.3f"
 #define METScopeView_Default_yLabelFormatString_TD @"%3.2f"
 /* Frequency-domain mode defaults */
 #define METScopeView_Default_SamplingRate 44100 // For x-axis scaling
-#define METScopeView_Default_XMin_FD (-20)
+#define METScopeView_Default_XMin_FD (0)
 #define METScopeView_Default_XMax_FD 20000.0    // For sampling rate 44.1kHz
 #define METScopeView_Default_YMin_FD (-0.04)
 #define METScopeView_Default_YMax_FD 1.0
@@ -143,6 +143,7 @@ typedef enum PinchZoomMode {
 @property (readonly) XLabelPosition xLabelPosition;
 @property (readonly) YLabelPosition yLabelPosition;
 
+
 @property (readonly) CGPoint visiblePlotMin;        // Visible bounds in plot units
 @property (readonly) CGPoint visiblePlotMax;
 @property (readonly) CGPoint minPlotMin;            // Hard limits constraining pinch zoom
@@ -196,17 +197,17 @@ typedef enum PinchZoomMode {
 - (void)setUpFFTWithSize:(int)size;
 
 /* Hard axislimits constraining pinch zoom; update */
-- (void)setHardXLim:(float)xMin max:(float)xMax;
-- (void)setHardYLim:(float)yMin max:(float)yMax;
+- (void)setHardXLim:(CGFloat)xMin max:(CGFloat)xMax;
+- (void)setHardYLim:(CGFloat)yMin max:(CGFloat)yMax;
 
 /* Set the visible ranges of the axes in plot units; update */
-- (void)setVisibleXLim:(float)xMin max:(float)xMax;
-- (void)setVisibleYLim:(float)yMin max:(float)yMax;
+- (void)setVisibleXLim:(CGFloat)xMin max:(CGFloat)xMax;
+- (void)setVisibleYLim:(CGFloat)yMin max:(CGFloat)yMax;
 
 /* Set ticks and grid scale by specifying the input magnitude per tick/grid block; update */
-- (void)setPlotUnitsPerXTick:(float)xTick;
-- (void)setPlotUnitsPerYTick:(float)yTick;
-- (void)setPlotUnitsPerTick:(float)xTick vertical:(float)yTick;
+- (void)setPlotUnitsPerXTick:(CGFloat)xTick;
+- (void)setPlotUnitsPerYTick:(CGFloat)yTick;
+- (void)setPlotUnitsPerTick:(CGFloat)xTick vertical:(CGFloat)yTick;
 
 /* Add/remove subviews for axes, labels, and grid */
 - (void)setAxesOn:(bool)pAxesOn;
@@ -233,6 +234,7 @@ typedef enum PinchZoomMode {
 /* Add a constant value to all x/y data in plot units */
 - (void)addToPlotXData:(float)value atIndex:(int)idx;
 - (void)addToPlotYData:(float)value atIndex:(int)idx;
+- (CGFloat)getFFTMagnitudeAtFrequency:(CGFloat)freq plotIdx:(int)idx;
 
 /* Set the visiblility of waveform subviews */
 - (void)setVisibilityAtIndex:(int)idx visible:(bool)visible;
@@ -240,6 +242,7 @@ typedef enum PinchZoomMode {
 
 /* Set/update plot resolution/color/linewidth for a waveform at a specified index */
 - (void)setPlotColor:(UIColor *)color atIndex:(int)idx;
+- (void)setLineAlpha:(CGFloat)alpha atIndex:(int)idx;
 - (void)setLineWidth:(float)width atIndex:(int)idx;
 - (void)setPlotResolution:(int)res atIndex:(int)idx;
 - (void)setVisiblity:(bool)visible atIndex:(int)idx;
@@ -257,6 +260,7 @@ typedef enum PinchZoomMode {
 /* Utility methods: convert pixel values to plot scales and vice-versa */
 - (CGPoint)plotScaleToPixel:(float)pX y:(float)pY;
 - (CGPoint)plotScaleToPixel:(CGPoint)plotScale;
+- (CGPoint)plotScaleToPixel_:(CGPoint)plotScale;
 - (CGPoint)pixelToPlotScale:(CGPoint)pixel;
 - (CGPoint)pixelToPlotScale:(CGPoint)pixel withOffset:(CGPoint)pixelOffset;
 

@@ -11,7 +11,7 @@
 @implementation METSlider
 
 CGFloat const kDefaultTrackHeightScalar = 0.1f;
-CGFloat const kDefaultTabRadiusScalar = 0.35f;
+CGFloat const kDefaultTabRadiusScalar = 0.4f;
 CGFloat const kDefaultEdgeRGBScalar = 0.5f;
 
 @synthesize value = _value;
@@ -53,6 +53,8 @@ CGFloat const kDefaultEdgeRGBScalar = 0.5f;
     
     _edgeRGBScalar = kDefaultEdgeRGBScalar;
     [self setTrackFillColor:[[UIColor blueColor] colorWithAlphaComponent:0.6f]];
+    _trackFillColorDisabled = [[UIColor lightGrayColor] colorWithAlphaComponent:0.3f];
+    _trackFillEdgeColorDisabled = [[UIColor lightGrayColor] colorWithAlphaComponent:0.4f];
     
     UIColor *lightOffWhite = [UIColor colorWithRed:0.95f green:0.95f blue:0.95f alpha:1.0];
     [self setTrackBackgroundColor:lightOffWhite];
@@ -254,8 +256,15 @@ CGFloat const kDefaultEdgeRGBScalar = 0.5f;
     [self drawTrackFilled:filledPath inRect:rect];
     CGContextAddPath(context, filledPath);
     
-    CGContextSetStrokeColorWithColor(context, _trackFillEdgeColor.CGColor);
-    CGContextSetFillColorWithColor(context, _trackFillColor.CGColor);
+    if ([self isEnabled]) {
+        CGContextSetFillColorWithColor(context, _trackFillColor.CGColor);
+        CGContextSetStrokeColorWithColor(context, _trackFillEdgeColor.CGColor);
+    }
+    else {
+        CGContextSetFillColorWithColor(context, _trackFillColorDisabled.CGColor);
+        CGContextSetStrokeColorWithColor(context, _trackFillEdgeColorDisabled.CGColor);
+    }
+    
     CGContextDrawPath(context, kCGPathEOFillStroke);
     
     /* ------------------------------------ */
@@ -266,8 +275,15 @@ CGFloat const kDefaultEdgeRGBScalar = 0.5f;
     [self drawTrackBackground:backgroundPath inRect:rect];
     CGContextAddPath(context, backgroundPath);
     
-    CGContextSetStrokeColorWithColor(context, _trackBackgroundEdgeColor.CGColor);
-    CGContextSetFillColorWithColor(context, _trackBackgroundColor.CGColor);
+    if ([self isEnabled]) {
+        CGContextSetStrokeColorWithColor(context, _trackBackgroundEdgeColor.CGColor);
+        CGContextSetFillColorWithColor(context, _trackBackgroundColor.CGColor);
+    }
+    else {
+        CGContextSetFillColorWithColor(context, _trackFillColorDisabled.CGColor);
+        CGContextSetStrokeColorWithColor(context, _trackFillEdgeColorDisabled.CGColor);
+    }
+    
     CGContextDrawPath(context, kCGPathEOFillStroke);
     
     /* ----------------------- */
@@ -285,9 +301,21 @@ CGFloat const kDefaultEdgeRGBScalar = 0.5f;
     /* Draw the slider tab */
     CGContextAddPath(context, tabPath);
     CGContextSetBlendMode(context, kCGBlendModeNormal);
-    CGContextSetStrokeColorWithColor(context, _tabEdgeColor.CGColor);
-    CGContextSetFillColorWithColor(context, _tabColor.CGColor);
+    
+    if ([self isEnabled]) {
+        CGContextSetStrokeColorWithColor(context, _tabEdgeColor.CGColor);
+        CGContextSetFillColorWithColor(context, _tabColor.CGColor);
+    }
+    else {
+        CGContextSetFillColorWithColor(context, _trackFillColorDisabled.CGColor);
+        CGContextSetStrokeColorWithColor(context, _trackFillEdgeColorDisabled.CGColor);
+    }
+    
     CGContextDrawPath(context, kCGPathEOFillStroke);
+    
+    CGPathRelease(filledPath);
+    CGPathRelease(backgroundPath);
+    CGPathRelease(tabPath);
 }
 
 - (void)drawTrackFilled:(CGMutablePathRef)path inRect:(CGRect)rect {

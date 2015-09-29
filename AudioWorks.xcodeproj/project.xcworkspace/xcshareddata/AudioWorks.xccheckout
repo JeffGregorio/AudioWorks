@@ -10,6 +10,8 @@
 	<string>AudioWorks</string>
 	<key>IDESourceControlProjectOriginsDictionary</key>
 	<dict>
+		<key>677D2B1145174F1106ED39FC7E43CB3536769781</key>
+		<string>https://github.com/MET-lab/SoundSynth.git</string>
 		<key>EEC4E724236D457489831649B61DBF0B4119C3BE</key>
 		<string>https://github.com/JeffGregorio/AudioLab.git</string>
 	</dict>
@@ -17,6 +19,8 @@
 	<string>AudioWorks.xcodeproj</string>
 	<key>IDESourceControlProjectRelativeInstallPathDictionary</key>
 	<dict>
+		<key>677D2B1145174F1106ED39FC7E43CB3536769781</key>
+		<string>../../../SoundSynth</string>
 		<key>EEC4E724236D457489831649B61DBF0B4119C3BE</key>
 		<string>../..</string>
 	</dict>
@@ -35,6 +39,14 @@
 			<string>EEC4E724236D457489831649B61DBF0B4119C3BE</string>
 			<key>IDESourceControlWCCName</key>
 			<string>AudioLab</string>
+		</dict>
+		<dict>
+			<key>IDESourceControlRepositoryExtensionIdentifierKey</key>
+			<string>public.vcs.git</string>
+			<key>IDESourceControlWCCIdentifierKey</key>
+			<string>677D2B1145174F1106ED39FC7E43CB3536769781</string>
+			<key>IDESourceControlWCCName</key>
+			<string>SoundSynth</string>
 		</dict>
 	</array>
 </dict>

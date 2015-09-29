@@ -32,7 +32,9 @@
     /* Colors */
     CGFloat _edgeRGBScalar;                 // RGB scalar to darken edge colors
     UIColor *_trackFillColor;
+    UIColor *_trackFillColorDisabled;
     UIColor *_trackFillEdgeColor;
+    UIColor *_trackFillEdgeColorDisabled;
     UIColor *_trackBackgroundColor;
     UIColor *_trackBackgroundEdgeColor;
     UIColor *_tabColor;
@@ -42,6 +44,8 @@
 @property (readonly) float value;
 @property (readonly) float minValue;
 @property (readonly) float maxValue;
+
+- (void)setEnabled:(bool)isEnabled;
 
 /* Value */
 - (BOOL)setValue:(float)value;

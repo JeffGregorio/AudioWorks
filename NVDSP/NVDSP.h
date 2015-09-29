@@ -30,6 +30,9 @@
 #pragma mark - Setters
 - (void) setCoefficients;
 
+#pragma mark - Getters
+- (void) getCoefficients:(float*)outcoeffs;
+
 
 #pragma mark - Effects
 - (void) filterContiguousData: (float *)data numFrames:(UInt32)numFrames channel:(UInt32)channel;

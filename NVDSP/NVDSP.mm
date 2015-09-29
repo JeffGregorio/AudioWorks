@@ -47,6 +47,17 @@
 
 - (void) setCoefficients {
     // // { b0/a0, b1/a0, b2/a0, a1/a0, a2/a0 }
+    
+//    if (fabs(a1) < (1.0 + a2)) {
+//        NSLog(@"|a1| < 1 + a2 ");
+//        return;
+//    }
+//    
+//    if (fabs(a2) < 1.0) {
+//        NSLog(@"|a2| < 1");
+//        return;
+//    }
+    
     coefficients[0] = b0;
     coefficients[1] = b1;
     coefficients[2] = b2;
@@ -56,6 +67,16 @@
     [self stabilityWarning];
 }
 
+#pragma mark - Getters
+- (void) getCoefficients:(float *)outcoeffs {
+    
+    outcoeffs[0] = b0;
+    outcoeffs[1] = b1;
+    outcoeffs[2] = b2;
+    outcoeffs[3] = a1;
+    outcoeffs[4] = a2;
+    return;
+}
 
 #pragma mark - Effects
 
@@ -69,7 +90,7 @@
     float *tInputBuffer = (float*) malloc((numFrames + 2) * sizeof(float));
     float *tOutputBuffer = (float*) malloc((numFrames + 2) * sizeof(float));
     
-    // Copy the data
+    // Copy the datav
     memcpy(tInputBuffer, gInputKeepBuffer[channel], 2 * sizeof(float));
     memcpy(tOutputBuffer, gOutputKeepBuffer[channel], 2 * sizeof(float));
     memcpy(&(tInputBuffer[2]), data, numFrames * sizeof(float));
@@ -154,14 +175,14 @@
     NSLog(@"\n");
     
     NSLog(@"|a1| < 1 + a2 ");
-    if (abs(a1) < (1 + a2)) {
+    if (fabs(a1) < (1 + a2)) {
         NSLog(@"a1 is stable\n");
     } else {
         NSLog(@"a1 is unstable\n");
     }
     
     NSLog(@"|a2| < 1");
-    if (abs(a2) < 1) {
+    if (fabs(a2) < 1) {
         NSLog(@"a2 is stable\n");
     } else {
         NSLog(@"a2 is unstable\n");
@@ -170,13 +191,13 @@
     NSLog(@"------------\n");
 }
 - (void) stabilityWarning {
-    if (abs(a1) < (1 + a2)) {
+    if (fabs(a1) < (1 + a2)) {
     } else {
         NSLog(@"|a1| < 1 + a2 ");
         NSLog(@"Warning: a1 is unstable\n");
     }
     
-    if (abs(a2) < 1) {
+    if (fabs(a2) < 1) {
     } else {
         NSLog(@"|a2| < 1");
         NSLog(@"Warning: a2 is unstable\n");

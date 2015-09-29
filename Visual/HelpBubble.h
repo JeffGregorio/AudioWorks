@@ -27,7 +27,6 @@ typedef enum PointerLocation {
 @interface HelpBubble : UIView {
     
     NSString *_text;
-    UIColor *_borderColor;
     PointerLocation _pointerLoc;
     
     CGRect _bubbleFrame;    // Text frame excluding pointers
@@ -36,6 +35,9 @@ typedef enum PointerLocation {
 @property HelpLabel *label;     // Make UILabel accessible to set text alignment
 @property CGPoint pointerOffset;
 
+@property bool drawBackground;
+@property (readonly) UIColor *color;
+@property CGFloat opacity;
 @property CGFloat leadingTextSpace;
 @property CGFloat lineWidth;
 @property CGFloat lineAlpha;
@@ -44,6 +46,13 @@ typedef enum PointerLocation {
 
 - (id)initWithText:(NSString *)text origin:(CGPoint)origin;
 - (id)initWithText:(NSString *)text origin:(CGPoint)origin width:(CGFloat)width;
+- (id)initWithText:(NSString *)text origin:(CGPoint)origin width:(CGFloat)width alignment:(NSTextAlignment)alignment;
+
+- (void)setFrameSizeForFontSize:(CGFloat)size;
+
+- (void)setColor:(UIColor *)color;
+- (void)setColor:(UIColor *)color alpha:(CGFloat)alpha;
+
 - (void)setPointerLocation:(PointerLocation)loc;
 - (void)setPointerLocation:(PointerLocation)loc offset:(CGPoint)offset;
 

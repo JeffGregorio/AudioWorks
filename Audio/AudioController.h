@@ -21,34 +21,56 @@
 #import <AVFoundation/AVAudioSession.h>
 #import <pthread.h>
 
+//#import "Audiobus.h"
 #import "NVDSP.h"
 #import "NVBandpassFilter.h"
 #import "NVHighPassFilter.h"
 #import "NVLowpassFilter.h"
 
 #import "CircularBuffer.h"
+#import "AdditiveSynth.h"
+#import "WavetableSynth.h"
+
+#import "Constants.h"
 
 #define kAudioSampleRate 44100.0
 #define kAudioBufferSize 1024
-#define kFFTSize kAudioBufferSize
+#define kFFTSize (kAudioBufferSize)
 
-#define kMaxDelayTime 2.0f
+#define kMaxDelayTime 4.0f
 #define kModFreqRampDuration 0.1f
+#define kFilterCutoffRampDuration 0.1f
 
-#pragma mark -
-#pragma mark AudioController
+#define kRecordingBufferLengthSeconds 3.0
+#define kWavetablePadLength 10
+
+@protocol AudioControllerDelegate;
+
+#pragma mark - AudioController
 @interface AudioController : NSObject {
     
 @public
     
     /* Recording buffers */
-    Float32 *inputBuffer;               // Pre-processing
+    Float32 *preInputGainBuffer;                // Pre-processing
+    pthread_mutex_t preInputGainBufferMutex;
+    Float32 *inputBuffer;                       // Pre-processing (pre-gain applied)
     pthread_mutex_t inputBufferMutex;
-    Float32 *outputBuffer;              // Post-processing
+    Float32 *outputBuffer;                      // Post-processing
     pthread_mutex_t outputBufferMutex;
     
-    /* Alternate recording buffers */
+    /* Processing buffers */
+    int procBufferLength;
+    Float32 *procBuffer;
+    Float32 *delayTapOut;
+
+    Float32 *procBuffer1;
+    Float32 *procBuffer2;
     
+    /* Visible time-bounds for offline procesing */
+    Float32 tMin, tMax;
+    
+    /* Alternate recording buffers */
     Float32 *spectrumBuffer;                // Spectrum
     Float32 *outputSpectrumBuffer;
     pthread_mutex_t spectrumBufferMutex;
@@ -64,22 +86,36 @@
     float modFreq;          // Current modulation frequency
     float targetModFreq;    // Target value for parameter ramp
     float modFreqStep;      // Per-sample ramp value to reach target mod freq
+    float modAmp;
     float modTheta;
     float modThetaInc;
     Float32 *modulationBuffer;                  // Modulation signal buffer
     pthread_mutex_t modulationBufferMutex;
     
     /* Filters */
+    float lpfTargetCutoff;
+    float lpfCutoffStep;
+    float hpfTargetCutoff;
+    float hpfCutoffStep;
     NVLowpassFilter *lpf;
     NVHighpassFilter *hpf;
     
     /* Distortion */
     Float32 clippingAmplitude;
+    Float32 clippingAmplitudeLow;
+    Float32 clippingAmplitudeHigh;
     
     /* Delay */
     CircularBuffer *circularBuffer;         // Delay buffer
     pthread_mutex_t circularBufferMutex;
-    Float32 tapGains[kMaxNumDelayTaps];
+    
+    /* Synthesis */
+    bool synthWavetableEnabled;
+    bool synthAdditiveEnabled;
+    Float32 synthFundamental;
+    AdditiveSynth *aSynth;
+    WavetableSynth *wSynth;
+    int phaseZeroOffset;
     
     bool inputWasEnabled, outputWasEnabled; // Pre-interruption flags
 }
@@ -102,34 +138,85 @@
 @property (readonly) int nFFTFrames;
 
 @property (readonly) bool inputEnabled;
+@property (readonly) bool modulationEnabled;
+@property (readonly) bool distortionEnabled;
+@property (readonly) bool hpfEnabled;
+@property (readonly) bool lpfEnabled;
+@property (readonly) bool delayEnabled;
 @property bool outputEnabled;
-@property bool distortionEnabled;
-@property bool hpfEnabled;
-@property bool lpfEnabled;
-@property bool modulationEnabled;
-@property bool delayEnabled;
+
+@property bool synthEnabled;
+@property bool effectsEnabled;
+@property (readonly) bool synthWavetableEnabled;
+@property (readonly) bool synthAdditiveEnabled;
+@property (readonly) Float32 synthFundamental;
+@property (readonly) int phaseZeroOffset;
+
+@property float modAmp;
+@property (readonly) float modFreq;
 
 /* Enable/disable audio input */
-- (bool)setInputEnabled: (bool)enabled;
+- (void)startAudioSession;
+- (void)stopAudioSession;
+- (bool)setInputEnabled:(bool)enabled;
 - (bool)setInputGain:(Float32)gain;
 
 - (bool)setSampleRate:(double)sampleRate;
 - (bool)setBufferSizeFrames:(int)bufferSizeFrames;
+- (void)setVisibleRangeInSeconds:(float)min max:(float)max;
 
 /* Append to and read most recent data from the internal buffers */
+- (void)appendPreInputGainBuffer:(Float32 *)inBuffer withLength:(int)length;
 - (void)appendInputBuffer:(Float32 *)inBuffer withLength:(int)length;
 - (void)appendOutputBuffer:(Float32 *)inBuffer withLength:(int)length;
 - (void)getInputBuffer:(Float32 *)outBuffer withLength:(int)length;
+- (void)getInputBuffer:(Float32 *)outBuffer withLength:(int)length offset:(int)offset;
 - (void)getInputBuffer:(Float32 *)outBuffer from:(int)startIdx to:(int)endIdx;
 - (void)getOutputBuffer:(Float32 *)outBuffer withLength:(int)length;
+- (void)getOutputBuffer:(Float32 *)outBuffer withLength:(int)length offset:(int)offset;
 - (void)getOutputBuffer:(Float32 *)outBuffer from:(int)startIdx to:(int)endIdx;
 - (void)getAverageSpectrum:(Float32 *)outBuffer from:(int)startIdx to:(int)endIdx;
 - (void)getAverageOutputSpectrum:(Float32 *)outBuffer from:(int)startIdx to:(int)endIdx;
 - (void)getModulationBuffer:(Float32 *)outBuffer withLength:(int)length;
 - (void)computeFFTs;
+- (CGFloat)getFFTMagnitudeAtFrequency:(CGFloat)freq;
+- (CGFloat)getNoiseFloorMagnitude;
 
-/* Setters */
-- (void)rescaleFilters:(float)minFreq max:(float)maxFreq;
+/* FX Parameters */
+- (void)setLPFCutoff:(CGFloat)fc;
+- (void)setHPFCutoff:(CGFloat)fc;
+- (void)setLPFEnabled:(bool)enabled;
+- (void)setHPFEnabled:(bool)enabled;
 - (void)setModFrequency:(float)freq;
+- (void)setModulationEnabled:(bool)enabled;
+- (void)setClippingAmplitude:(Float32)amp;
+- (void)setClippingAmplitudeLow:(Float32)amp;
+- (void)setClippingAmplitudeHigh:(Float32)amp;
+- (void)setDistortionEnabled:(bool)enabled;
+- (void)setDelayEnabled:(bool)enabled;
+- (void)addDelayTapWithDelayTime:(Float32)time gain:(Float32)amp;
+- (int)getNumDelayTaps;
+- (void)setDelayTap:(int)tapIdx time:(CGFloat)time amplitude:(CGFloat)amp;
+- (void)removeDelayTap:(int)tapIdx;
+
+/* Synth Parameters */
+- (void)synthSetFundamental:(float)f0;
+- (void)synthSetNumHarmonics:(int)num;
+- (void)synthSetAmplitude:(float)amp forHarmonic:(int)num;
+- (void)synthSetNoiseAmplitude:(float)amp;
+- (void)synthSetAdditiveEnabled;
+- (void)synthSetWavetableEnabled;
+- (void)synthSetWavetable:(CGFloat *)wavetable length:(int)length;
+- (void)synthSetAmplitudeEnvelope:(CGFloat *)env length:(int)length;
+- (void)synthResetAmplitudeEnvelope;
+- (float)synthGetAmplitudeForHarmonic:(int)num;
+- (float)synthGetNoiseAmplitude;
+
+/* Effects processing DSP */
+- (void)processRecordingInputBufferOffline;
+- (void)processInputBuffer:(Float32 *)procBuffer length:(int)inNumberFrames;
+
+/* Synthesis DSP */
+- (void)renderOutputBufferMono:(Float32 *)buffer outNumberFrames:(int)outNumFrames;
 
 @end

@@ -16,17 +16,20 @@
     _text = text;
     CGSize textSize = [_text sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:20.0f]}];
     
-    return [self initWithText:text origin:origin width:textSize.width];
+    return [self initWithText:text origin:origin width:textSize.width alignment:NSTextAlignmentLeft];
 }
 
 - (id)initWithText:(NSString *)text origin:(CGPoint)origin width:(CGFloat)width {
+    return [self initWithText:text origin:origin width:width alignment:NSTextAlignmentLeft];
+}
+
+- (id)initWithText:(NSString *)text origin:(CGPoint)origin width:(CGFloat)width alignment:(NSTextAlignment)alignment {
     
     /* Computer the size of the help bubble's frame based on the text */
     _text = text;
     
     NSDictionary *attributes = [NSDictionary dictionaryWithObjectsAndKeys:
-                                [UIFont systemFontOfSize:24.0f], NSFontAttributeName,
-                                nil];
+                                [UIFont systemFontOfSize:22.0f], NSFontAttributeName, nil];
     
     CGRect textFrame = [_text boundingRectWithSize:CGSizeMake(width, 1000)
                                            options:(NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading)
@@ -47,14 +50,16 @@
         
         _bubbleFrame = self.frame;
         
-        _borderColor = [[UIColor blueColor] colorWithAlphaComponent:_lineAlpha];
-        
         [self setBackgroundColor:[UIColor clearColor]];
+        
+        _drawBackground = true;
+        _opacity = 0.75;
+        _color = [[UIColor blackColor] colorWithAlphaComponent:_opacity];
         
         _label = [[HelpLabel alloc] initWithFrame:textFrame];
         [_label setEdgeInsets:UIEdgeInsetsMake(0, _leadingTextSpace,
                                               0, _leadingTextSpace)];
-        [_label setTextAlignment:NSTextAlignmentNatural];
+        [_label setTextAlignment:alignment];
         [_label setLineBreakMode:NSLineBreakByWordWrapping];
         [_label setTextColor:[UIColor whiteColor]];
         [_label setNumberOfLines:0];
@@ -65,6 +70,36 @@
         _pointerLoc = kHelpBubblePointerLocationNone;
     }
     return self;
+}
+
+- (void)setFrameSizeForFontSize:(CGFloat)size {
+    
+    /* Set height scaling for specific font size */
+    NSDictionary *attributes = [NSDictionary dictionaryWithObjectsAndKeys:
+                                [UIFont systemFontOfSize:size], NSFontAttributeName, nil];
+    
+    CGRect textFrame = [_text boundingRectWithSize:CGSizeMake(self.frame.size.width, 1000)
+                                           options:(NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading)
+                                        attributes:attributes context:nil];
+    
+    /* Shift the text frame up to compansate for the change in frame height */
+    CGFloat heightDiff = textFrame.size.height - self.frame.size.height;
+    CGRect labelFrame = _label.frame;
+    labelFrame.size.height += heightDiff;
+    [_label setFrame:labelFrame];
+    
+    textFrame.origin = self.frame.origin;
+    [self setFrame:textFrame];
+}
+
+- (void)setColor:(UIColor *)color {
+    _color = [color colorWithAlphaComponent:_opacity];
+    [self setNeedsDisplay];
+}
+
+- (void)setColor:(UIColor *)color alpha:(CGFloat)alpha {
+    _opacity = alpha;
+    [self setColor:color];
 }
 
 - (void)setPointerLocation:(PointerLocation)loc {
@@ -107,10 +142,13 @@
 
 - (void)drawRect:(CGRect)rect {
     
+    if (!_drawBackground)
+        return;
+    
     CGContextRef context = UIGraphicsGetCurrentContext();
     CGContextSetLineWidth(context, _lineWidth);
-    CGContextSetStrokeColorWithColor(context, _borderColor.CGColor);
-    CGContextSetFillColorWithColor(context, [[UIColor blackColor] colorWithAlphaComponent:0.7].CGColor);
+    CGContextSetStrokeColorWithColor(context, _color.CGColor);
+    CGContextSetFillColorWithColor(context, _color.CGColor);
     
     CGFloat topEdge = _pointerLoc == kHelpBubblePointerLocationTop ? _pointerLength : 0.0f;
     CGFloat bottomEdge =  self.frame.size.height;
@@ -120,7 +158,7 @@
     rightEdge -= _pointerLoc == kHelpBubblePointerLocationRight ? _pointerLength : 0.0f;
     
     /* Create the path and pass it to the drawing helpers to construct the borders */
-    CGPathRef path = CGPathCreateMutable();
+    CGMutablePathRef path = CGPathCreateMutable();
     CGPathMoveToPoint(path, nil, _cornerRadius + ((_pointerLoc == kHelpBubblePointerLocationLeft) ? _pointerLength : 0.0f), (_pointerLoc == kHelpBubblePointerLocationTop) ? _pointerLength : 0.0f);
     [self addTopEdgeAtY:topEdge withPointer:_pointerLoc == kHelpBubblePointerLocationTop path:path];
     [self addRightEdgeAtX:rightEdge withPointer:_pointerLoc == kHelpBubblePointerLocationRight path:path];
@@ -130,9 +168,11 @@
     /* Draw */
     CGContextAddPath(context, path);
     CGContextFillPath(context);
+    
+    CGPathRelease(path);
 }
 
--(void)addTopEdgeAtY:(CGFloat)y withPointer:(bool)drawPointer path:(CGPathRef)path {
+-(void)addTopEdgeAtY:(CGFloat)y withPointer:(bool)drawPointer path:(CGMutablePathRef)path {
 
     CGPoint loc = CGPointMake(_cornerRadius, y);
     loc.x += _pointerLoc == kHelpBubblePointerLocationLeft ? _pointerLength : 0.0f;
@@ -165,7 +205,7 @@
     CGPathAddArcToPoint(path, nil, loc.x, loc.y, loc.x, loc.y + self.frame.size.height, _cornerRadius);
 }
 
--(void)addBottomEdgeAtY:(CGFloat)y withPointer:(bool)drawPointer path:(CGPathRef)path {
+-(void)addBottomEdgeAtY:(CGFloat)y withPointer:(bool)drawPointer path:(CGMutablePathRef)path {
 
     CGPoint loc = CGPointMake(_bubbleFrame.size.width - _cornerRadius, y);
     loc.x += _pointerLoc == kHelpBubblePointerLocationLeft ? _pointerLength : 0.0f;
@@ -198,7 +238,7 @@
     CGPathAddArcToPoint(path, nil, loc.x, loc.y, loc.x, loc.y - self.frame.size.height, _cornerRadius);
 }
 
--(void)addLeftEdgeAtX:(CGFloat)x withPointer:(bool)drawPointer path:(CGPathRef)path {
+-(void)addLeftEdgeAtX:(CGFloat)x withPointer:(bool)drawPointer path:(CGMutablePathRef)path {
 
     CGPoint loc = CGPointMake(x, _bubbleFrame.size.height - _cornerRadius);
     loc.y += _pointerLoc == kHelpBubblePointerLocationTop ? _pointerLength : 0.0f;
@@ -211,7 +251,7 @@
         pointerApex.y += _pointerOffset.y;
         
         /* Left-ward edge (drawing bottom to top) */
-        loc.y -= (pointerApex.y - _cornerRadius - (_pointerLength / 2.0f));
+        loc.y -= (_bubbleFrame.size.height - (pointerApex.y + _cornerRadius + (_pointerLength / 2.0f)));
         CGPathAddLineToPoint(path, nil, loc.x, loc.y);
         
         /* Apex */
@@ -232,7 +272,7 @@
     CGPathAddArcToPoint(path, nil, loc.x, loc.y, loc.x+self.frame.size.width, loc.y, _cornerRadius);
 }
 
--(void)addRightEdgeAtX:(CGFloat)x withPointer:(bool)drawPointer path:(CGPathRef)path {
+-(void)addRightEdgeAtX:(CGFloat)x withPointer:(bool)drawPointer path:(CGMutablePathRef)path {
     
     CGPoint loc = CGPointMake(x, _cornerRadius);
     loc.y += _pointerLoc == kHelpBubblePointerLocationTop ? _pointerLength : 0.0f;
