@@ -84,6 +84,18 @@
     delayTimeSteps[tapIdx] = (targetDelayTimes[tapIdx] - delayTimes[tapIdx]) / (kDelayTimeRampTime * sampleRate);
 }
 
+- (Float32)getDelayTimeForTap:(int)tapIdx {
+    
+    Float32 time = -1.0;
+    
+    if (tapIdx < 0 && tapIdx >= kMaxNumDelayTaps) {
+        NSLog(@"Warning: Invalid tap index %d (nTaps = %d)", tapIdx, nTaps);
+        return time;
+    }
+    
+    return delayTimes[tapIdx];
+}
+
 - (void)setGainForTap:(int)tapIdx gain:(Float32)gain {
     
     if (tapIdx < 0 && tapIdx >= kMaxNumDelayTaps) {
@@ -134,7 +146,8 @@
     
     for (int i = 0; i < length; i++) {
 
-        data[i] = buffer[(int)delayIdx];
+//        data[i] = buffer[(int)delayIdx];
+        data[i] = [self interpolateBuffer:delayIdx];
         
         delayIdx++;
         if (delayIdx >= bufferLength-1)
@@ -161,6 +174,17 @@
                 ioBuffer[i+j] += delayProcBuffer[j] * tapGains[tap];
         }
     }
+}
+
+- (Float32)interpolateBuffer:(Float32)index {
+    
+    int x0 = (int)floorf(index);
+    int x1 = x0+1;
+    
+    Float32 y0 = buffer[x0];
+    Float32 y1 = buffer[x1];
+    
+    return y0 + (y1-y0)*((index - (Float32)x0));
 }
 
 @end

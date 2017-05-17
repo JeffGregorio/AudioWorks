@@ -39,12 +39,15 @@
 
 #define kMaxDelayTime 4.0f
 #define kModFreqRampDuration 0.1f
+#define kModAmpRampDuration 0.1f
 #define kFilterCutoffRampDuration 0.1f
 
 #define kRecordingBufferLengthSeconds 3.0
 #define kWavetablePadLength 10
 
-@protocol AudioControllerDelegate;
+#define kPitchBendNumSemitones 2.0
+
+@protocol AudioPlaybackDelegate;
 
 #pragma mark - AudioController
 @interface AudioController : NSObject {
@@ -52,6 +55,9 @@
 @public
     
     /* Recording buffers */
+    Float32 *playbackBuffer;
+    Float32 *playbackWetBuffer;
+    
     Float32 *preInputGainBuffer;                // Pre-processing
     pthread_mutex_t preInputGainBufferMutex;
     Float32 *inputBuffer;                       // Pre-processing (pre-gain applied)
@@ -87,6 +93,8 @@
     float targetModFreq;    // Target value for parameter ramp
     float modFreqStep;      // Per-sample ramp value to reach target mod freq
     float modAmp;
+    float targetModAmp;
+    float modAmpStep;
     float modTheta;
     float modThetaInc;
     Float32 *modulationBuffer;                  // Modulation signal buffer
@@ -112,13 +120,15 @@
     /* Synthesis */
     bool synthWavetableEnabled;
     bool synthAdditiveEnabled;
-    Float32 synthFundamental;
+    float synthFundamental;
     AdditiveSynth *aSynth;
     WavetableSynth *wSynth;
     int phaseZeroOffset;
     
     bool inputWasEnabled, outputWasEnabled; // Pre-interruption flags
 }
+
+@property id<AudioPlaybackDelegate> playbackDelegate;
 
 /* These are only of interest internally, but must be accessible publicly by the audio callback, which must be a non-member C method because Core Audio sucks */
 @property (readonly) AudioUnit ioUnit;
@@ -144,6 +154,8 @@
 @property (readonly) bool lpfEnabled;
 @property (readonly) bool delayEnabled;
 @property bool outputEnabled;
+@property bool recordedPlayback;
+@property int read_ptr;
 
 @property bool synthEnabled;
 @property bool effectsEnabled;
@@ -152,7 +164,7 @@
 @property (readonly) Float32 synthFundamental;
 @property (readonly) int phaseZeroOffset;
 
-@property float modAmp;
+@property (readonly) float modAmp;
 @property (readonly) float modFreq;
 
 /* Enable/disable audio input */
@@ -161,14 +173,19 @@
 - (bool)setInputEnabled:(bool)enabled;
 - (bool)setInputGain:(Float32)gain;
 
+- (void)startBufferPlayback:(Float32)t0;
+
 - (bool)setSampleRate:(double)sampleRate;
 - (bool)setBufferSizeFrames:(int)bufferSizeFrames;
 - (void)setVisibleRangeInSeconds:(float)min max:(float)max;
 
 /* Append to and read most recent data from the internal buffers */
+- (void)appendPlaybackBuffer:(Float32 *)inBuffer withLength:(int)length;
 - (void)appendPreInputGainBuffer:(Float32 *)inBuffer withLength:(int)length;
 - (void)appendInputBuffer:(Float32 *)inBuffer withLength:(int)length;
 - (void)appendOutputBuffer:(Float32 *)inBuffer withLength:(int)length;
+- (void)getPlaybackBuffer:(Float32 *)outBuffer from:(int)startIdx to:(int)endIdx;
+- (void)getPlaybackWetBuffer:(Float32 *)outBuffer from:(int)startIdx to:(int)endIdx;
 - (void)getInputBuffer:(Float32 *)outBuffer withLength:(int)length;
 - (void)getInputBuffer:(Float32 *)outBuffer withLength:(int)length offset:(int)offset;
 - (void)getInputBuffer:(Float32 *)outBuffer from:(int)startIdx to:(int)endIdx;
@@ -188,6 +205,7 @@
 - (void)setLPFEnabled:(bool)enabled;
 - (void)setHPFEnabled:(bool)enabled;
 - (void)setModFrequency:(float)freq;
+- (void)setModAmp:(float)amp;
 - (void)setModulationEnabled:(bool)enabled;
 - (void)setClippingAmplitude:(Float32)amp;
 - (void)setClippingAmplitudeLow:(Float32)amp;
@@ -197,10 +215,14 @@
 - (void)addDelayTapWithDelayTime:(Float32)time gain:(Float32)amp;
 - (int)getNumDelayTaps;
 - (void)setDelayTap:(int)tapIdx time:(CGFloat)time amplitude:(CGFloat)amp;
+- (CGFloat)getDelayTimeForTap:(int)tapIdx;
 - (void)removeDelayTap:(int)tapIdx;
 
 /* Synth Parameters */
+- (void)synthSetAmplitudeScalar:(float)amp;
 - (void)synthSetFundamental:(float)f0;
+- (void)synthSetFundamental:(float)f0 ramp:(bool)doRamp;
+- (void)synthSetPitchBendVal:(float)normVal;
 - (void)synthSetNumHarmonics:(int)num;
 - (void)synthSetAmplitude:(float)amp forHarmonic:(int)num;
 - (void)synthSetNoiseAmplitude:(float)amp;
@@ -208,6 +230,7 @@
 - (void)synthSetWavetableEnabled;
 - (void)synthSetWavetable:(CGFloat *)wavetable length:(int)length;
 - (void)synthSetAmplitudeEnvelope:(CGFloat *)env length:(int)length;
+- (void)synthRetriggerAmplitudeEnvelope;
 - (void)synthResetAmplitudeEnvelope;
 - (float)synthGetAmplitudeForHarmonic:(int)num;
 - (float)synthGetNoiseAmplitude;
@@ -220,3 +243,10 @@
 - (void)renderOutputBufferMono:(Float32 *)buffer outNumberFrames:(int)outNumFrames;
 
 @end
+
+#pragma mark - AudioPlaybackDelegate
+@protocol AudioPlaybackDelegate <NSObject>
+- (void)playbackPositionChanged:(CGFloat)time;
+- (void)playbackEnded;
+@end
+

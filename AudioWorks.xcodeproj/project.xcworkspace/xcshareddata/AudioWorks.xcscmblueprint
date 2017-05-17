@@ -1,0 +1,30 @@
+{
+  "DVTSourceControlWorkspaceBlueprintPrimaryRemoteRepositoryKey" : "EEC4E724236D457489831649B61DBF0B4119C3BE",
+  "DVTSourceControlWorkspaceBlueprintWorkingCopyRepositoryLocationsKey" : {
+
+  },
+  "DVTSourceControlWorkspaceBlueprintWorkingCopyStatesKey" : {
+    "EEC4E724236D457489831649B61DBF0B4119C3BE" : 0,
+    "677D2B1145174F1106ED39FC7E43CB3536769781" : 0
+  },
+  "DVTSourceControlWorkspaceBlueprintIdentifierKey" : "2155FE6F-29F1-426C-A6CB-6781B1297628",
+  "DVTSourceControlWorkspaceBlueprintWorkingCopyPathsKey" : {
+    "EEC4E724236D457489831649B61DBF0B4119C3BE" : "AudioLab\/",
+    "677D2B1145174F1106ED39FC7E43CB3536769781" : "SoundSynth\/"
+  },
+  "DVTSourceControlWorkspaceBlueprintNameKey" : "AudioWorks",
+  "DVTSourceControlWorkspaceBlueprintVersion" : 204,
+  "DVTSourceControlWorkspaceBlueprintRelativePathToProjectKey" : "AudioWorks.xcodeproj",
+  "DVTSourceControlWorkspaceBlueprintRemoteRepositoriesKey" : [
+    {
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositoryURLKey" : "https:\/\/github.com\/MET-lab\/SoundSynth.git",
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositorySystemKey" : "com.apple.dt.Xcode.sourcecontrol.Git",
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositoryIdentifierKey" : "677D2B1145174F1106ED39FC7E43CB3536769781"
+    },
+    {
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositoryURLKey" : "https:\/\/github.com\/JeffGregorio\/AudioLab.git",
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositorySystemKey" : "com.apple.dt.Xcode.sourcecontrol.Git",
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositoryIdentifierKey" : "EEC4E724236D457489831649B61DBF0B4119C3BE"
+    }
+  ]
+}

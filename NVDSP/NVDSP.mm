@@ -104,7 +104,7 @@
     memcpy(gOutputKeepBuffer[channel], &(tOutputBuffer[numFrames]), 2 * sizeof(float));
     
     free(tInputBuffer);
-    free(tOutputBuffer);
+    free(tOutputBuffer); 
 }
 
 - (void)filterData:(float *)data numFrames:(UInt32)numFrames numChannels:(UInt32)numChannels {

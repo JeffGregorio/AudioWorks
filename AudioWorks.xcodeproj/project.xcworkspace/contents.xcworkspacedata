@@ -2,6 +2,6 @@
 <Workspace
    version = "1.0">
    <FileRef
-      location = "self:AudioWorks.xcodeproj">
+      location = "self:/Users/Jeff/Drexel/MET Lab/SMT/SMT 2014/App Development/AudioLab/AudioWorks.xcodeproj">
    </FileRef>
 </Workspace>

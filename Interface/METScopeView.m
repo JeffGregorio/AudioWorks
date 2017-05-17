@@ -262,83 +262,40 @@
     
     pthread_mutex_lock(&dataMutex);
     
-    /* */
+    /* Find the first non-NaN, non-Inf pixel location */
+    int startIdx = 0;
+    while ((isnan((float)plotPixels[startIdx].x) || isnan((float)plotPixels[startIdx].y) ||
+            (isinf((float)plotPixels[startIdx].x) || isinf((float)plotPixels[startIdx].x)))
+           && startIdx < resolution-1)
+        startIdx++;
+    
+    /* Configure graphics context */
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSetLineWidth(context, lineWidth);
+    CGContextSetStrokeColorWithColor(context, lineColor.CGColor);
+    
+    /* Begin a path */
+    CGContextBeginPath(context);
+    CGContextMoveToPoint(context, plotPixels[startIdx].x, plotPixels[startIdx].y);
+    
+    /* Connect plot samples for short time scales, make vertical lines to +- RMS amplitude for longer time scales */
     if (fillMode) {
-        
-        /* Find the first non-NaN pixel location */
-        int startIdx = 0;
-        while ((isnan((float)plotPixels[startIdx].x) || isnan((float)plotPixels[startIdx].y) ||
-                (isinf((float)plotPixels[startIdx].x) || isinf((float)plotPixels[startIdx].x)))
-               && startIdx < resolution-1)
-            startIdx++;
-        
         CGPoint current;
-        CGPoint previous;
-        previous = plotPixels[startIdx];
-        
         for (int i = startIdx+1; i < resolution-1; i++) {
-            
-            /* Skip any NaNs */
-            if (isnan((float)plotPixels[i].x) || isnan((float)plotPixels[i].y))
-                continue;
-            
             current = plotPixels[i];
-            
-            UIBezierPath *path = [UIBezierPath bezierPath];
-            [path moveToPoint:previous];
-            [path addLineToPoint:current];
+            CGContextMoveToPoint(context, current.x, current.y);
             current.y += 2 * (parent.originPixel.y - current.y);
-            [path addLineToPoint:current];
-            previous.y += 2 * (parent.originPixel.y - previous.y);
-            [path addLineToPoint:previous];
-            [path closePath];
-            path.lineWidth = lineWidth;
-            [lineColor setStroke];
-            [lineColor setFill];
-            [path fill];
-            [path stroke];
-            
-            previous = plotPixels[i];
+            CGContextAddLineToPoint(context, current.x, current.y);
         }
     }
-    
     else {
-        
-        CGContextRef context = UIGraphicsGetCurrentContext();
-        CGContextSetLineWidth(context, lineWidth);
-        CGContextSetStrokeColorWithColor(context, lineColor.CGColor);
-        
-        /* Find the first non-NaN pixel location */
-        int startIdx = 0;
-        while ((isnan((float)plotPixels[startIdx].x) || isnan((float)plotPixels[startIdx].y) ||
-               (isinf((float)plotPixels[startIdx].x) || isinf((float)plotPixels[startIdx].x)))
-               && startIdx < resolution-1)
-            startIdx++;
-        
-        CGPoint previous = plotPixels[startIdx];
-        
         for (int i = startIdx+1; i < resolution-1; i++) {
-            
-            /* Skip any NaNs or Infs */
-            if (isnan((float)plotPixels[i].x) || isnan((float)plotPixels[i].y) ||
-                isinf((float)plotPixels[i].x) || isinf((float)plotPixels[i].y))
-                continue;
-            
-            /* Skip anything beyond the plot bounds */
-            if (parent.displayMode == kMETScopeViewTimeDomainMode &&
-                (plotUnits[i].x < parent.visiblePlotMin.x || plotUnits[i].x > parent.visiblePlotMax.x ||
-                plotUnits[i].y < parent.visiblePlotMin.y || plotUnits[i].y > parent.visiblePlotMax.y))
-                continue;
-            
-            CGContextBeginPath(context);
-            CGContextMoveToPoint(context, previous.x, previous.y);
             CGContextAddLineToPoint(context, plotPixels[i].x, plotPixels[i].y);
-            CGContextStrokePath(context);
-            
-            previous = plotPixels[i];
         }
     }
     
+    /* Draw */
+    CGContextStrokePath(context);
     pthread_mutex_unlock(&dataMutex);
 }
 

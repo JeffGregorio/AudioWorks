@@ -10,7 +10,7 @@
 
 #define kMaxNumDelayTaps 4
 #define kDelayTimeRampTime 0.3f
-#define kDelayTapGainRampTime 0.3f
+#define kDelayTapGainRampTime 0.1f
 #define kDelayProcBufferSize 64
 
 @interface CircularBuffer : NSObject {
@@ -37,6 +37,7 @@
 - (void)addDelayTapWithDelayTime:(Float32)time gain:(Float32)amp;
 - (void)removeDelayTapAtIndex:(int)tapIdx;
 - (void)setDelayTimeForTap:(int)tapIdx delayTime:(Float32)time;
+- (Float32)getDelayTimeForTap:(int)tapIdx;
 - (void)setGainForTap:(int)tapIdx gain:(Float32)gain;
 - (void)writeDataWithLength:(int)length inData:(Float32 *)data;
 - (void)readFromDelayTap:(int)tapIdx withLength:(int)length outData:(Float32 *)data;

@@ -1,14 +1,14 @@
 clear; close; clc;
 
-path = '/Users/Jeff/Music/Captain Beefheart/(1968) Trout Mask Replica/15 - Pena.mp3';
+path = '/Users/Jeff/Music/Can/(1971) Tago Mago/01 - Paperhouse.mp3';
 
 [xx, fs] = audioread(path);
 
 xx = sum(xx, 2);
 tt = 0:1/fs:(length(xx)/fs-(1/fs));
 
-df = designfilt('lowpassiir', 'PassbandFrequency', 300/(fs/2), 'FilterOrder', 4);
-xx = filter(df, xx);
+% df = designfilt('lowpassiir', 'PassbandFrequency', 300/(fs/2), 'FilterOrder', 4);
+% xx = filter(df, xx);
 
 
 startIdx = round(2.6 * fs);
@@ -21,7 +21,7 @@ axis off;
 
 print(gcf, 'waveform', '-dpdf');
 
-soundsc(xx(startIdx:endIdx), fs);
+% soundsc(xx(startIdx:endIdx), fs);
 
 % sizes = [152, 80, 76, 58, 40, 32, 29];
 % 

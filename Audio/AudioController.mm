@@ -31,15 +31,48 @@ static OSStatus processingCallback(void *inRefCon, // Reference to the calling o
     if (status != noErr)
         printf("Error rendering from remote IO unit\n");
     
+    /* Playback a recorded buffer */
+    if (controller.recordedPlayback) {
+        // If we have more than an audio buffer left
+        if (controller.read_ptr + inNumberFrames < controller.recordingBufferLengthFrames) {
+            memcpy(controller->procBuffer,
+                   controller->playbackBuffer+controller.read_ptr,
+                   sizeof(Float32) * inNumberFrames);
+            controller.read_ptr += inNumberFrames;
+            
+            if ([controller playbackDelegate])
+                [[controller playbackDelegate] playbackPositionChanged:controller.read_ptr / controller.sampleRate];
+        }
+        // Last partial audio buffer
+        else {
+            int i;
+            for (i = 0; controller.read_ptr < controller.recordingBufferLengthFrames; i++, controller.read_ptr++)
+                controller->procBuffer[i] = controller->playbackBuffer[controller.read_ptr];
+            // Pad end with zeros
+            while (i < inNumberFrames) {
+                controller->procBuffer[i] = 0.0;
+                i++;
+            }
+            
+            if ([controller playbackDelegate])
+                [[controller playbackDelegate] playbackEnded];
+        }
+    }
     /* Get input from the mic or from the synth */
-    if (![controller synthEnabled])
-        memcpy(controller->procBuffer, (Float32 *)ioData->mBuffers[0].mData, sizeof(Float32) * inNumberFrames);
-    else
-        [controller renderOutputBufferMono:controller->procBuffer outNumberFrames:inNumberFrames];
+    else {
+        if (![controller synthEnabled])
+            memcpy(controller->procBuffer, (Float32 *)ioData->mBuffers[0].mData, sizeof(Float32) * inNumberFrames);
+        else
+            [controller renderOutputBufferMono:controller->procBuffer outNumberFrames:inNumberFrames];
+    }
     
     /* Apply the input gain to the input buffer */
     for (int i = 0; i < inNumberFrames; i++)
         controller->procBuffer[i] *= controller.inputGain;
+    
+    /* Append to audio playback buffer if not currently playing back */
+    if (![controller recordedPlayback])
+        [controller appendPlaybackBuffer:controller->procBuffer withLength:inNumberFrames];
     
     /* Set the pre-processing buffer with pre-gain applied */
     [controller appendInputBuffer:controller->procBuffer withLength:inNumberFrames];
@@ -47,6 +80,14 @@ static OSStatus processingCallback(void *inRefCon, // Reference to the calling o
     /* FX processing method */
     if ([controller effectsEnabled])
         [controller processInputBuffer:controller->procBuffer length:inNumberFrames];
+    
+    /* Update the playback wet buffer (for plotting) */
+    if (controller.recordedPlayback) {
+        int j = 0;
+        for (int i = controller.read_ptr - inNumberFrames; i < controller.read_ptr; j++, i++) {
+            controller->playbackWetBuffer[i] = controller->procBuffer[j];
+        }
+    }
     
     /* Update the stored output buffer (for plotting) */
     [controller appendOutputBuffer:controller->procBuffer withLength:inNumberFrames];
@@ -97,6 +138,8 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
 #pragma mark - AudioController
 @implementation AudioController
 
+@synthesize playbackDelegate;
+
 @synthesize ioUnit;
 @synthesize bufferList;
 @synthesize audioSession;
@@ -112,6 +155,9 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
 
 @synthesize inputEnabled;
 @synthesize outputEnabled;
+@synthesize recordedPlayback;
+@synthesize read_ptr;
+
 @synthesize effectsEnabled;
 @synthesize distortionEnabled;
 @synthesize hpfEnabled;
@@ -135,7 +181,7 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
     if (self) {
         
         /* Set flags */
-        inputEnabled = inputWasEnabled = false;
+        inputEnabled = inputWasEnabled = recordedPlayback = false;
         outputEnabled = outputWasEnabled = false;
         effectsEnabled = true;
         distortionEnabled = false;
@@ -157,6 +203,10 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
 
 - (void)dealloc {
     
+    if (playbackBuffer)
+        free(playbackBuffer);
+    if (playbackWetBuffer)
+        free(playbackWetBuffer);
     if (preInputGainBuffer)
         free(preInputGainBuffer);
     if (inputBuffer)
@@ -340,6 +390,15 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
     tMin = 0.0f;
     tMax = (float)length / sampleRate;
     
+    /* Recorded audio playback */
+    if (playbackBuffer)
+        free(playbackBuffer);
+    playbackBuffer = (Float32 *)calloc(length, sizeof(Float32));
+    
+    if (playbackWetBuffer)
+        free(playbackWetBuffer);
+    playbackWetBuffer = (Float32 *)calloc(length, sizeof(Float32));
+    
     /* Time-domain (pre-processing, pre-input gain) */
     if (preInputGainBuffer)
         free(preInputGainBuffer);
@@ -513,6 +572,13 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
     return true;
 }
 
+#pragma mark ########## Active ############
+- (void)startBufferPlayback:(Float32)t0 {
+    recordedPlayback = true;
+    read_ptr = recordingBufferLengthFrames - (kRecordingBufferLengthSeconds - t0) * sampleRate;
+    read_ptr = read_ptr >= 0 ? read_ptr : 0;
+}
+
 - (bool)setSampleRate:(double)fs {
     
     bool success = false;
@@ -543,6 +609,17 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
 - (void)setVisibleRangeInSeconds:(float)min max:(float)max {
     tMin = min;
     tMax = max;
+}
+
+- (void)appendPlaybackBuffer:(Float32 *)inBuffer withLength:(int)length {
+    
+    /* Shift old values back */
+    for (int i = 0; i < recordingBufferLengthFrames - length; i++)
+        playbackBuffer[i] = playbackBuffer[i + length];
+    
+    /* Append new values to the front */
+    for (int i = 0; i < length; i++)
+        playbackBuffer[recordingBufferLengthFrames - (length-i)] = inBuffer[i];
 }
 
 /* We need to store audio input before applying pre-gain so we can do offline processing when input is paused */
@@ -607,7 +684,7 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
     pthread_mutex_lock(&spectrumBufferMutex);
     
     for (int t = 0; t < nFFTFrames; t++) {
-        
+
         for (int i = 0; i < bufferSizeFrames; i++)
             tdBuffer[i] = inputBuffer[t*bufferSizeFrames+i];
         
@@ -685,6 +762,28 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
         outputBuffer[recordingBufferLengthFrames - (length-i)] = inBuffer[i];
     
     pthread_mutex_unlock(&outputBufferMutex);
+}
+
+- (void)getPlaybackBuffer:(Float32 *)outBuffer from:(int)startIdx to:(int)endIdx {
+    
+    if (startIdx < 0 || endIdx >= recordingBufferLengthFrames || endIdx < startIdx)
+        NSLog(@"%s: Invalid buffer indices", __PRETTY_FUNCTION__);
+    
+    int length = endIdx - startIdx;
+    
+    for (int i = 0, j = startIdx; i < length; i++, j++)
+        outBuffer[i] = playbackBuffer[j];
+}
+
+- (void)getPlaybackWetBuffer:(Float32 *)outBuffer from:(int)startIdx to:(int)endIdx {
+    
+    if (startIdx < 0 || endIdx >= recordingBufferLengthFrames || endIdx < startIdx)
+        NSLog(@"%s: Invalid buffer indices", __PRETTY_FUNCTION__);
+    
+    int length = endIdx - startIdx;
+    
+    for (int i = 0, j = startIdx; i < length; i++, j++)
+        outBuffer[i] = playbackWetBuffer[j];
 }
 
 /* Get n = length most recent audio samples from the recording buffer */
@@ -843,6 +942,15 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
         [self processRecordingInputBufferOffline];
 }
 
+- (void)setModAmp:(float)amp {
+    
+    targetModAmp = amp > 1.0 ? 1.0 : amp;
+    modAmpStep = (targetModAmp - modAmp) / (kModAmpRampDuration * sampleRate);
+    
+    if (!inputEnabled)
+        [self processRecordingInputBufferOffline];
+}
+
 - (void)setModulationEnabled:(bool)enabled {
     
     modulationEnabled = enabled;
@@ -918,6 +1026,17 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
 //        [self processRecordingInputBufferOffline];
 }
 
+- (CGFloat)getDelayTimeForTap:(int)tapIdx {
+    
+    Float32 time = -1.0;
+    
+    if (tapIdx < 0 || tapIdx >= kMaxNumDelayTaps) {
+        NSLog(@"Invalid delay tap index %d", tapIdx);
+        return time;
+    }
+    return [circularBuffer getDelayTimeForTap:tapIdx];
+}
+
 - (void)removeDelayTap:(int)tapIdx {
     [circularBuffer removeDelayTapAtIndex:tapIdx];
 }
@@ -961,8 +1080,14 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
             modFreq += modFreqStep;
             modThetaInc = 2.0 * M_PI * modFreq / kAudioSampleRate;
         }
+        /* Ramp the modulation amplitude if needed */
+        if ((modAmp < targetModAmp && modAmpStep > 0) ||
+            (modAmp > targetModAmp && modAmpStep < 0) ) {
+            modAmp += modAmpStep;
+        }
         
-        modulationBuffer[i] = modAmp * [aSynth wavetableLookup:modTheta];
+        modulationBuffer[i] = [aSynth wavetableLookup:modTheta];
+//        modulationBuffer[i] = modAmp * [aSynth wavetableLookup:modTheta];
         
         modTheta += modThetaInc;
         if (modTheta > 2*M_PI)
@@ -971,8 +1096,10 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
     pthread_mutex_unlock(&modulationBufferMutex);
 
     if (modulationEnabled) {
-        for (int i = 0; i < inNumberFrames; i++)
-            buffer[i] *= modulationBuffer[i];
+        for (int i = 0; i < inNumberFrames; i++) {
+//            buffer[i] *= modulationBuffer[i];
+            buffer[i] = (1.0-modAmp) * buffer[i] + modAmp * buffer[i] * modulationBuffer[i];
+        }
     }
     
     /* ---------------- */
@@ -1029,12 +1156,6 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
         }
     }
     
-//    /* Ramp the filter cutoff frequencies if needed */
-//    if ((lpf.cornerFrequency < lpfTargetCutoff && lpfCutoffStep > 0) ||
-//        (lpf.cornerFrequency > lpfTargetCutoff && lpfCutoffStep < 0) ) {
-//        [lpf setCornerFrequency:lpf.cornerFrequency + lpfCutoffStep];
-//    }
-    
     if (hpfEnabled) {
         /* Apply filter */
         [hpf filterContiguousData:buffer numFrames:inNumberFrames channel:0];
@@ -1056,6 +1177,11 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
 
 
 #pragma mark - Synth Parameter Updates
+- (void)synthSetAmplitudeScalar:(float)amp {
+    [aSynth setAmplitudeScalar:amp];
+    [wSynth setAmplitudeScalar:amp];
+}
+
 - (void)synthSetWavetableEnabled {
     synthWavetableEnabled = true;
     synthAdditiveEnabled = false;
@@ -1074,6 +1200,23 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
     synthFundamental = f0;
     [aSynth setFundamental:f0];
     [wSynth setFundamental:f0];
+}
+
+- (void)synthSetFundamental:(float)f0 ramp:(bool)doRamp {
+    if (doRamp)
+        [self synthSetFundamental:f0];
+    else {
+        synthFundamental = f0;
+        [aSynth setFundamental:f0 ramp:false];
+        [wSynth setFundamental:f0 ramp:false];
+    }
+}
+
+- (void)synthSetPitchBendVal:(float)normVal {   // [-1, 1]
+    normVal *= kPitchBendNumSemitones;          // [-2, 2] (semitones)
+    normVal = powf(2.0, normVal/12.0);          // [2^(-1/6), 2^(1/6)]  (pitch multipler)
+    [aSynth setFundamental:synthFundamental * normVal];
+    [wSynth setFundamental:synthFundamental * normVal];
 }
 
 - (void)synthSetNoiseAmplitude:(float)amp {
@@ -1096,6 +1239,11 @@ void interruptListener(void *inUserData, UInt32 inInterruptionState) {
 - (void)synthSetAmplitudeEnvelope:(CGFloat *)env length:(int)length {
     [aSynth setAmplitudeEnvelopeCG:env length:length];
     [wSynth setAmplitudeEnvelopeCG:env length:length];
+}
+
+- (void)synthRetriggerAmplitudeEnvelope {
+    [aSynth retriggerAmplitudeEnvelope];
+    [wSynth retriggerAmplitudeEnvelope];
 }
 
 - (void)synthResetAmplitudeEnvelope {
